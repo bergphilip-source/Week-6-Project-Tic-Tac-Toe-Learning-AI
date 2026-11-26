@@ -1,0 +1,236 @@
+import json
+import random
+from pathlib import Path
+ 
+# The eight ways to win: three rows, three columns, two diagonals,
+# written as positions on a board numbered 0-8 left to right, top to bottom.
+WINS = [(0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6)]
+ 
+ 
+def winner(board):
+    """Return 'X', 'O', 'draw', or None if the game is still going."""
+    for a, b, c in WINS:
+        if board[a] != '.' and board[a] == board[b] == board[c]:
+            return board[a]
+    return 'draw' if '.' not in board else None
+ 
+ 
+def moves(board):
+    """Every empty square, as a list of positions."""
+    return [i for i, c in enumerate(board) if c == '.']
+ 
+ 
+def play(board, pos, mark):
+    """Return a NEW board with mark placed at pos. Boards are never edited in place."""
+    return board[:pos] + mark + board[pos+1:]
+ 
+ 
+def show(board):
+    for r in range(0, 9, 3):
+        row = [board[i] if board[i] != '.' else str(i + 1) for i in range(r, r + 3)]
+        print(' ' + ' | '.join(row))
+
+
+ALPHA   = 0.3     # learning rate
+GAMMA   = 0.9     # discount - how much future reward matters
+EPSILON = 0.2     # 20% of moves are random, so it keeps exploring
+ 
+Q = {}            # board string -> {position: value}
+ 
+ 
+def qrow(board):
+    """Get this board's row of the Q-table, creating it the first time we see it."""
+    if board not in Q:
+        Q[board] = {m: 0.0 for m in moves(board)}
+    return Q[board]
+ 
+ 
+def choose(board, rng, explore=True):
+    """Pick a move: explore at random, or take the best one we know about."""
+    available = moves(board)
+    row = qrow(board) if explore else Q.get(board, {move: 0.0 for move in available})
+    if explore and rng.random() < EPSILON:
+        return rng.choice(moves(board))
+    best_value = max(row.values())
+    best_moves = [move for move, value in row.items() if value == best_value]
+    return rng.choice(best_moves) if explore else min(best_moves)
+ 
+ 
+def update(board, action, reward, next_board, rng):
+    """Apply the Q-learning rule. This is the same line you wrote in Assignment 6."""
+ 
+    # If the game ended there is no next position, so future value is 0.
+    # Otherwise it is the best move available from where we landed.
+    if next_board is None:
+        future = 0.0
+    else:
+        future = max(qrow(next_board).values())
+ 
+    # ----- YOU WRITE THIS LINE -----
+    Q[board][action] = Q[board][action] + ALPHA * (reward + GAMMA * future - Q[board][action])
+
+REWARD_WIN  = 1.0
+REWARD_LOSS = -1.0
+REWARD_DRAW = 0.0
+
+
+def train(games=50_000, seed=42):
+    """Train X against a random O opponent and return the game outcomes."""
+    rng = random.Random(seed)
+    outcomes = {"X": 0, "O": 0, "draw": 0}
+    Q.clear()
+
+    for _ in range(games):
+        board = "........."
+
+        while True:
+            agent_board = board
+            action = choose(agent_board, rng)
+            board = play(board, action, "X")
+            result = winner(board)
+
+            if result == "X":
+                update(agent_board, action, REWARD_WIN, None, rng)
+                outcomes["X"] += 1
+                break
+            if result == "draw":
+                update(agent_board, action, REWARD_DRAW, None, rng)
+                outcomes["draw"] += 1
+                break
+
+            board = play(board, rng.choice(moves(board)), "O")
+            result = winner(board)
+
+            if result == "O":
+                update(agent_board, action, REWARD_LOSS, None, rng)
+                outcomes["O"] += 1
+                break
+            if result == "draw":
+                update(agent_board, action, REWARD_DRAW, None, rng)
+                outcomes["draw"] += 1
+                break
+
+            update(agent_board, action, 0.0, board, rng)
+
+    return outcomes
+
+
+def evaluate(games=1_000, seed=43):
+    """Evaluate the greedy X policy against random O without changing Q."""
+    rng = random.Random(seed)
+    outcomes = {"wins": 0, "draws": 0, "losses": 0}
+
+    for _ in range(games):
+        board = "........."
+
+        while True:
+            board = play(board, choose(board, rng, explore=False), "X")
+            result = winner(board)
+
+            if result == "X":
+                outcomes["wins"] += 1
+                break
+            if result == "draw":
+                outcomes["draws"] += 1
+                break
+
+            board = play(board, rng.choice(moves(board)), "O")
+            result = winner(board)
+
+            if result == "O":
+                outcomes["losses"] += 1
+                break
+            if result == "draw":
+                outcomes["draws"] += 1
+                break
+
+    print(f"Evaluation complete: {games:,} games (exploration off)")
+    print(f"Wins:   {outcomes['wins']:,} ({outcomes['wins'] / games:.1%})")
+    print(f"Draws:  {outcomes['draws']:,} ({outcomes['draws'] / games:.1%})")
+    print(f"Losses: {outcomes['losses']:,} ({outcomes['losses'] / games:.1%})")
+    return outcomes
+
+
+def play_against_agent():
+    """Play as O against the trained, greedy X agent."""
+    rng = random.Random()
+    print("\nYou are O. The trained agent is X and moves first.")
+    print("Choose an open square by its number (1-9), or enter q to quit.")
+
+    while True:
+        board = "........."
+        print("\nNew game:")
+        show(board)
+
+        while True:
+            board = play(board, choose(board, rng, explore=False), "X")
+            print("\nAgent's move:")
+            show(board)
+            result = winner(board)
+
+            if result:
+                break
+
+            while True:
+                move_text = input("Your move (1-9): ").strip().lower()
+                if move_text in {"q", "quit"}:
+                    print("Thanks for playing!")
+                    return
+
+                try:
+                    position = int(move_text) - 1
+                except ValueError:
+                    print("Enter a number from 1 to 9, or q to quit.")
+                    continue
+
+                if position not in moves(board):
+                    print("That square is occupied or out of range. Choose an open square.")
+                    continue
+                break
+
+            board = play(board, position, "O")
+            print("\nYour move:")
+            show(board)
+            result = winner(board)
+
+            if result:
+                break
+
+        if result == "X":
+            print("The agent wins!")
+        elif result == "O":
+            print("You win!")
+        else:
+            print("It's a draw!")
+
+        if input("Play again? (y/n): ").strip().lower() not in {"y", "yes"}:
+            print("Thanks for playing!")
+            return
+
+
+def save_q_table(path="q_table.json"):
+    """Save the trained policy so it can be reused after the training run."""
+    data = {
+        "agent_mark": "X",
+        "opponent": "random O",
+        "q_table": {
+            board: {str(move): value for move, value in row.items()}
+            for board, row in Q.items()
+        },
+    }
+    Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    total_games = 50_000
+    results = train(total_games)
+    save_q_table()
+
+    print(f"Training complete: {total_games:,} games")
+    print(f"Agent X wins: {results['X']:,} ({results['X'] / total_games:.1%})")
+    print(f"Opponent O wins: {results['O']:,} ({results['O'] / total_games:.1%})")
+    print(f"Draws: {results['draw']:,} ({results['draw'] / total_games:.1%})")
+    print(f"Positions in the Q-table: {len(Q):,}")
+    evaluate()
+    print("Saved learned Q-table to q_table.json")
+    play_against_agent()
