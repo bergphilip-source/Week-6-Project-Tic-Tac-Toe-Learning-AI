@@ -1,4 +1,5 @@
 # Week-6-Project-Tic-Tac-Toe-Learning-AI
+Philip Berg
 
 Open `index.html` in a browser to play Tic-Tac-Toe against the AI.
 
